@@ -4,7 +4,7 @@
   
   This project is a real-time data storytelling dashboard and analytics engine built to highlight team and player performance across the 2024 NCAA Division I softball season. The dashboard leverages curated and cleaned stats to provide rich team profiles, player highlights, and style-based offensive/defensive breakdowns.
 
-The goal is to deliver:
+#### The goal is to deliver:
 
   💡 High-impact, digestible data insights for softball fans, analysts, and bracket watchers
   
@@ -14,7 +14,7 @@ The goal is to deliver:
   
   🎯 Create a complete 2024 NCAA D1 softball team profile dataset
 
-Build interactive Tableau dashboard views showing:
+#### Build interactive Tableau dashboard views showing:
 
 - Team rankings and comparisons
 - Offensive/defensive identity breakdowns
@@ -25,6 +25,7 @@ Build interactive Tableau dashboard views showing:
 ## **🧱 Project Structure**
 
 softball_2024_dashboard/
+
 │
 ├── data/                   # Raw and cleaned stat CSVs
 ├── notebooks/              # EDA and feature engineering workflows
@@ -36,11 +37,52 @@ softball_2024_dashboard/
 
 ## **🧩 Data Sources**
 
-NCAA Stats https://stats.ncaa.org – official stat provider
-D1Softball.com – rankings and player features
-Warrennolan.com - RPI & ELO rankings and player features
-NCSA Sports - 
-[School athletic sites] – rosters, stat leaders, and box scores
-[ESPN/StatBroadcast] – live stat feeds for player highlights
+- NCAA Stats https://stats.ncaa.org – official stat provider
+- D1Softball.com – rankings and player features
+- Warrennolan.com - RPI & ELO rankings and player features
+- NCSA Sports
+- [School athletic sites] – rosters, stat leaders, and box scores
+- [ESPN/StatBroadcast] – live stat feeds for player highlights
 
+## 🧼 Data Features
+
+
+## 📈 Dashboard Features
+- 🟢 Team Profiles: Win/loss, run differential, player leaders, key stats
+
+- 🟠 Style Analysis: Visual clustering of teams by playstyle
+
+- 🔵 Player Spotlights: Top hitters, pitchers, and clutch performers
+
+- 🟣 Conference Comparison: Summary stats and power ranking by conference
+
+🛠️ Built with Tableau (with CSV feeds from Python + Pandas)
+
+## 📚 Technical Highlights
+- Python (pandas, BeautifulSoup, sklearn)
+- Tableau (custom visuals + filters)
+- Hand-collected + scraped NCAA softball stats
+- Sports domain-specific feature engineering
+- Storytelling through visual analytics
+
+### 🧠 Future Extensions (coming soon in Phase 2)
+- Integrate game-level logs and matchup modeling
+- Build ML models for:
+  - Tournament at-large probability
+  - Host seeding projection
+- Add real-time scraping pipelines
+- Deploy interactive dashboard using Tableau Public or Streamlit
+
+### 🧵 Example Visuals
+📌 Coming soon — preview images from the Tableau dashboard will go here.
+
+### 📎 License
+This project is intended for educational, portfolio, and demo use. All NCAA-related logos and stats belong to their respective organizations.
+
+### ✍️ Author
+Krystal Beasley
+
+Data Analyst & Sports Modeler
+
+[Your LinkedIn] | [Your Portfolio] | [GitHub Profile]
 
