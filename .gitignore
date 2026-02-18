@@ -21,6 +21,10 @@ env/
 !scleaned_data.csv
 !sec_cleaned_data.csv
 !secleaned_data.csv
+# Allow scraped data in data/raw/
+!data/
+!data/raw/
+!data/raw/*.csv
 
 # Editor / OS
 .DS_Store
