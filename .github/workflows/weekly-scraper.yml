@@ -1,0 +1,160 @@
+name: Weekly D1Softball Stats Scraper
+
+on:
+  schedule:
+    - cron: '0 13 * * 1'   # 9 AM ET (1 PM UTC) every Monday
+  workflow_dispatch:
+    inputs:
+      top_n:
+        description: 'Number of top teams to scrape (ignored if team is set)'
+        required: false
+        default: '50'
+      team:
+        description: 'Single team name, e.g. "Alabama" (leave blank to scrape top_n teams)'
+        required: false
+        default: ''
+      cookie:
+        description: 'Browser Cookie header for authenticated access (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # needed to commit scraped data back to the repo
+
+jobs:
+  scrape-and-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install --quiet pandas requests beautifulsoup4 tabulate
+
+      # ── 3. Resolve run parameters ─────────────────────────────────────────
+      - name: Resolve run parameters
+        id: params
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          OUTFILE="data/raw/team_advanced_metrics_${DATE}.csv"
+          echo "date=$DATE"       >> "$GITHUB_OUTPUT"
+          echo "outfile=$OUTFILE" >> "$GITHUB_OUTPUT"
+
+      # ── 4. Run scraper ────────────────────────────────────────────────────
+      - name: Run D1Softball scraper
+        id: scrape
+        env:
+          TOP_N:   ${{ github.event.inputs.top_n   || '50' }}
+          TEAM:    ${{ github.event.inputs.team     || '' }}
+          COOKIE:  ${{ github.event.inputs.cookie   || '' }}
+          OUTFILE: ${{ steps.params.outputs.outfile }}
+        run: |
+          mkdir -p data/raw
+
+          ARGS=("--out" "$OUTFILE")
+          [ -n "$TEAM"   ] && ARGS+=("--team"   "$TEAM")   || ARGS+=("--top_n" "$TOP_N")
+          [ -n "$COOKIE" ] && ARGS+=("--cookie" "$COOKIE")
+
+          echo "Running: python d1softball_scraper.py ${ARGS[*]}"
+          python d1softball_scraper.py "${ARGS[@]}" 2>&1 | tee scraper.log
+        continue-on-error: true   # always run summary + commit steps
+
+      # ── 5. Job summary ────────────────────────────────────────────────────
+      - name: Generate job summary
+        env:
+          DATE:    ${{ steps.params.outputs.date }}
+          OUTFILE: ${{ steps.params.outputs.outfile }}
+        run: |
+          {
+            echo "## D1Softball Weekly Scrape — ${DATE}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Triggered by** | \`${{ github.event_name }}\` |"
+            echo "| **Branch** | \`${{ github.ref_name }}\` |"
+            echo "| **Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f "$OUTFILE" ]; then
+            ROWS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(len(df))")
+            N_COLS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(len(df.columns))")
+            COL_NAMES=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(', '.join(df.columns))")
+            SIZE=$(du -h "$OUTFILE" | cut -f1)
+
+            {
+              echo "### ✅ Scrape succeeded"
+              echo ""
+              echo "| Field | Value |"
+              echo "|---|---|"
+              echo "| **Output file** | \`${OUTFILE}\` |"
+              echo "| **File size** | ${SIZE} |"
+              echo "| **Teams scraped** | ${ROWS} |"
+              echo "| **Columns (${N_COLS})** | ${COL_NAMES} |"
+              echo ""
+              echo "### Top 10 Teams by WAR Proxy"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            python scripts/summarize_scrape.py "$OUTFILE" >> "$GITHUB_STEP_SUMMARY"
+
+            {
+              echo ""
+              echo "### Files added to \`data/raw/\`"
+              echo ""
+              echo "| File | Size |"
+              echo "|---|---|"
+              echo "| \`${OUTFILE}\` | ${SIZE} |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          else
+            {
+              echo "### ❌ Scrape failed — no output file produced"
+              echo ""
+              echo "The scraper may have hit a network error, HTTP 403 (auth required),"
+              echo "or an unexpected page structure."
+              echo ""
+              echo "**Scraper log:**"
+              echo "\`\`\`"
+              cat scraper.log
+              echo "\`\`\`"
+              echo ""
+              echo "> **Tip:** Re-run with a \`cookie\` input value copied from your browser's"
+              echo "> DevTools → Network tab while logged into d1softball.com."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ── 6. Commit & push scraped data ─────────────────────────────────────
+      - name: Commit and push scraped data
+        env:
+          DATE:    ${{ steps.params.outputs.date }}
+          OUTFILE: ${{ steps.params.outputs.outfile }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data/raw/
+
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit — data/raw/ is unchanged."
+            exit 0
+          fi
+
+          ADDED_FILES=$(git diff --cached --name-only | tr '\n' ' ')
+          ROWS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(len(df))" 2>/dev/null || echo "unknown")
+
+          COMMIT_MSG=$(printf "data: weekly D1Softball scrape %s\n\nFiles added  : %s\nTeams scraped: %s\nSource       : d1softball_scraper.py (workflow run #${{ github.run_number }})" \
+            "$DATE" "$ADDED_FILES" "$ROWS")
+          git commit -m "$COMMIT_MSG"
+
+          git push origin HEAD

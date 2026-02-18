@@ -1,0 +1,2 @@
+# This file keeps the data/raw/ directory tracked in git.
+# Weekly scraper outputs (team_advanced_metrics_YYYY-MM-DD.csv) are stored here.
