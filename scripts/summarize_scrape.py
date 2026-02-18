@@ -9,11 +9,11 @@ import sys
 import pandas as pd
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: summarize_scrape.py <csv_path>", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Print a markdown summary of a scraped CSV.")
+    parser.add_argument("csv_path", help="Path to the input CSV file.")
+    args = parser.parse_args()
 
-    csv_path = sys.argv[1]
+    csv_path = args.csv_path
     df = pd.read_csv(csv_path)
 
     DISPLAY_COLS = ["team", "wOBA", "wRC+", "ISO", "BABIP", "wRAA", "WAR_proxy"]
