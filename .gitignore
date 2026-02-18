@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Output / scratch
+*.csv
+!bigten_cleaned_softball_20242025_ranking_summary.csv
+!cleaned1acc_softballranking_summary2024_2025.csv
+!cleaned_data.csv
+!scleaned_data.csv
+!sec_cleaned_data.csv
+!secleaned_data.csv
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
