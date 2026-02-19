@@ -1,0 +1,2 @@
+# Weekly NCAA conference snapshots (ncaa_conference_snapshot.py) are saved here.
+# Filename pattern: ncaa_snapshot_{SPORT}_div{DIV}_conf{CONF_ID}_period{PERIOD}_{YYYYMMDD}.csv
