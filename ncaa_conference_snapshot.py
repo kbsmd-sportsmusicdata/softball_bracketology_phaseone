@@ -216,9 +216,9 @@ def main():
     long_df.insert(3, "conf_id", args.conf_id)
     long_df.insert(4, "ranking_period", ranking_period)
     long_df.insert(5, "ranking_period_label", ranking_label)
-    long_df.insert(6, "scraped_at_utc", datetime.utcnow().isoformat(timespec="seconds") + "Z")
+    long_df.insert(6, "scraped_at_utc", datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"))
     # Step 4: save
-    stamp = datetime.utcnow().strftime("%Y%m%d")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     out_name = f"ncaa_snapshot_{args.sport_code}_div{args.division}_conf{args.conf_id}_period{ranking_period}_{stamp}.csv"
     out_path = os.path.join(args.out_dir, safe_filename(out_name))
     long_df.to_csv(out_path, index=False)
