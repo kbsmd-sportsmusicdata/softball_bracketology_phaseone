@@ -16,6 +16,7 @@ import argparse
 import csv
 import io
 import os
+import random
 import re
 import sys
 import time
@@ -28,23 +29,62 @@ from bs4 import BeautifulSoup
 BASE_URL = "https://stats.ncaa.org"
 RANKING_SUMMARY_PATH = "/rankings/ranking_summary"
 DEFAULT_TIMEOUT = 30
-DEFAULT_SLEEP_SEC = 1.0  # be polite
+DEFAULT_SLEEP_SEC = 7.0   # ncaa_stats_py uses 5-10s; we default to 7 with ±3s jitter
+MAX_RETRIES = 3           # retries on 403/429/503 with exponential backoff
 @dataclass
 class PeriodOption:
     value: str        # e.g., "14.0"
     label: str        # e.g., "02/17/2026"
-def _session() -> requests.Session:
+def _session(sleep_sec: float = DEFAULT_SLEEP_SEC) -> requests.Session:
+    """
+    Build a session that looks like a real Chrome browser.
+    Makes a warm-up GET to the NCAA stats homepage first so the site
+    issues a session cookie before we hit the actual data endpoint —
+    the same flow a human browser takes.
+    """
     s = requests.Session()
-    # A realistic UA helps avoid dumb blocks. Replace with yours if you want.
+    # Full Chrome-style headers, matching what bigballR / ncaa_stats_py use.
+    # Key fix: no custom app suffix in User-Agent (dead giveaway for bots).
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36 "
-                      " ncaa-conference-snapshot/1.0",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;"
+            "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+        ),
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Cache-Control": "max-age=0",
     })
+    # Warm-up: visit the homepage so the server assigns a session cookie
+    # (mirrors what a user does before clicking into rankings).
+    try:
+        s.get(BASE_URL, timeout=DEFAULT_TIMEOUT)
+        _jitter_sleep(sleep_sec)
+        # Now set Referer for subsequent requests — the site sees us navigating
+        # from the homepage, not arriving cold on a deep URL.
+        s.headers.update({
+            "Referer": f"{BASE_URL}/",
+            "Sec-Fetch-Site": "same-origin",
+        })
+    except Exception:
+        pass  # warm-up failure is non-fatal
     return s
+
+
+def _jitter_sleep(base_sec: float) -> None:
+    """Sleep for base_sec ± up to 3 seconds of random jitter."""
+    jitter = random.uniform(-min(3.0, base_sec * 0.4), 3.0)
+    time.sleep(max(1.0, base_sec + jitter))
 def fetch_ranking_summary_html(
     sess: requests.Session,
     academic_year: str,
@@ -69,9 +109,24 @@ def fetch_ranking_summary_html(
     if ranking_period is not None:
         params["ranking_period"] = ranking_period
     url = f"{BASE_URL}{RANKING_SUMMARY_PATH}"
-    resp = sess.get(url, params=params, timeout=DEFAULT_TIMEOUT)
-    resp.raise_for_status()
-    return resp.text
+    # Retry on 403/429/503 with exponential backoff (10s → 20s → 40s).
+    # These codes indicate rate-limiting or bot detection — waiting and
+    # retrying is what ncaa_stats_py / bigballR both do.
+    for attempt in range(1, MAX_RETRIES + 1):
+        resp = sess.get(url, params=params, timeout=DEFAULT_TIMEOUT)
+        if resp.status_code in (403, 429, 503) and attempt < MAX_RETRIES:
+            wait = 10 * (2 ** (attempt - 1))
+            print(
+                f"HTTP {resp.status_code} on attempt {attempt}/{MAX_RETRIES}. "
+                f"Waiting {wait}s before retry…",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+            continue
+        resp.raise_for_status()
+        return resp.text
+    resp.raise_for_status()  # final raise if all retries exhausted
+    return resp.text  # unreachable but satisfies type checkers
 def parse_ranking_period_options(html: str) -> List[PeriodOption]:
     """
     The ranking period selector is the 4th <select> on the page in the current UI,
@@ -173,10 +228,14 @@ def main():
     ap.add_argument("--conf_id", required=True, help="e.g., 827 for Big Ten")
     ap.add_argument("--ranking_period", default=None, help="Optional: force a specific ranking_period value (e.g., 14.0)")
     ap.add_argument("--out_dir", default="data/raw/ncaa_conf_snapshots")
-    ap.add_argument("--sleep_sec", type=float, default=DEFAULT_SLEEP_SEC)
+    ap.add_argument(
+        "--sleep_sec", type=float, default=DEFAULT_SLEEP_SEC,
+        help=f"Base seconds to sleep between requests (default {DEFAULT_SLEEP_SEC}; ±3s jitter added)"
+    )
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
-    sess = _session()
+    # Session warm-up visits the homepage first (gets cookies, sets Referer).
+    sess = _session(sleep_sec=args.sleep_sec)
     # Step 1: get page (either forced period or just to discover latest period)
     html = fetch_ranking_summary_html(
         sess=sess,
@@ -186,7 +245,7 @@ def main():
         conf_id=args.conf_id,
         ranking_period=args.ranking_period,
     )
-    time.sleep(args.sleep_sec)
+    _jitter_sleep(args.sleep_sec)
     # Step 2: determine latest period if not provided
     if args.ranking_period is None:
         periods = parse_ranking_period_options(html)
@@ -202,7 +261,7 @@ def main():
             conf_id=args.conf_id,
             ranking_period=ranking_period,
         )
-        time.sleep(args.sleep_sec)
+        _jitter_sleep(args.sleep_sec)
     else:
         ranking_period = args.ranking_period
         ranking_label = "custom"
