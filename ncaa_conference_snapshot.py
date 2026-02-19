@@ -21,7 +21,7 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
