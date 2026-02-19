@@ -1,0 +1,184 @@
+name: Weekly NCAA Conference Snapshot
+
+on:
+  schedule:
+    - cron: '0 18 * * 2'   # Tuesdays 1 PM ET (6 PM UTC)
+  workflow_dispatch:
+    inputs:
+      sport_code:
+        description: 'NCAA sport code (e.g. WSB for softball)'
+        required: false
+        default: 'WSB'
+      division:
+        description: 'Division (1.0, 2.0, 3.0)'
+        required: false
+        default: '1.0'
+      academic_year:
+        description: 'Academic year (e.g. 2026.0 for 2025-26)'
+        required: false
+        default: '2026.0'
+      conf_id:
+        description: 'Conference ID (e.g. 827 for SEC)'
+        required: false
+        default: '827'
+      ranking_period:
+        description: 'Specific ranking period value — leave blank to auto-detect latest'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # needed to commit snapshots back to the repo
+
+jobs:
+  snapshot-and-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python setup ───────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -U --quiet pip pandas requests beautifulsoup4 lxml tabulate
+
+      # ── 3. Resolve run parameters ─────────────────────────────────────────
+      - name: Resolve run parameters
+        id: params
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "out_dir=data/raw/ncaa_conf_snapshots" >> "$GITHUB_OUTPUT"
+
+      # ── 4. Run snapshot scraper ───────────────────────────────────────────
+      - name: Run NCAA conference snapshot
+        id: scrape
+        env:
+          SPORT_CODE:     ${{ github.event.inputs.sport_code     || 'WSB' }}
+          DIVISION:       ${{ github.event.inputs.division       || '1.0' }}
+          ACADEMIC_YEAR:  ${{ github.event.inputs.academic_year  || '2026.0' }}
+          CONF_ID:        ${{ github.event.inputs.conf_id        || '827' }}
+          RANKING_PERIOD: ${{ github.event.inputs.ranking_period || '' }}
+          OUT_DIR:        ${{ steps.params.outputs.out_dir }}
+        run: |
+          mkdir -p "$OUT_DIR"
+
+          ARGS=(
+            "--sport_code"    "$SPORT_CODE"
+            "--division"      "$DIVISION"
+            "--academic_year" "$ACADEMIC_YEAR"
+            "--conf_id"       "$CONF_ID"
+            "--out_dir"       "$OUT_DIR"
+          )
+          [ -n "$RANKING_PERIOD" ] && ARGS+=("--ranking_period" "$RANKING_PERIOD")
+
+          echo "Running: python ncaa_conference_snapshot.py ${ARGS[*]}"
+          python ncaa_conference_snapshot.py "${ARGS[@]}" 2>&1 | tee scraper.log
+
+          # Capture the output filename from the last "Saved:" line
+          OUTFILE=$(grep -oP '(?<=Saved: ).+' scraper.log | tail -1)
+          echo "outfile=$OUTFILE" >> "$GITHUB_OUTPUT"
+        continue-on-error: true   # always run summary + commit steps
+
+      # ── 5. Job summary ────────────────────────────────────────────────────
+      - name: Generate job summary
+        env:
+          DATE:    ${{ steps.params.outputs.date }}
+          OUTFILE: ${{ steps.scrape.outputs.outfile }}
+          OUT_DIR: ${{ steps.params.outputs.out_dir }}
+        run: |
+          {
+            echo "## NCAA Conference Snapshot — ${DATE}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Triggered by** | \`${{ github.event_name }}\` |"
+            echo "| **Branch** | \`${{ github.ref_name }}\` |"
+            echo "| **Run** | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo "| **Sport** | \`${{ github.event.inputs.sport_code || 'WSB' }}\` |"
+            echo "| **Conference ID** | \`${{ github.event.inputs.conf_id || '827' }}\` |"
+            echo "| **Academic year** | \`${{ github.event.inputs.academic_year || '2026.0' }}\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$OUTFILE" ] && [ -f "$OUTFILE" ]; then
+            ROWS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(len(df))")
+            STATS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(df['statistic'].nunique() if 'statistic' in df.columns else 'n/a')")
+            TEAMS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(df['team'].nunique() if 'team' in df.columns else 'n/a')")
+            PERIOD=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(df['ranking_period_label'].iloc[0] if 'ranking_period_label' in df.columns else 'n/a')")
+            SIZE=$(du -h "$OUTFILE" | cut -f1)
+
+            {
+              echo "### ✅ Snapshot succeeded"
+              echo ""
+              echo "| Field | Value |"
+              echo "|---|---|"
+              echo "| **Output file** | \`${OUTFILE}\` |"
+              echo "| **File size** | ${SIZE} |"
+              echo "| **Rows** | ${ROWS} |"
+              echo "| **Unique statistics** | ${STATS} |"
+              echo "| **Unique teams** | ${TEAMS} |"
+              echo "| **Ranking period** | ${PERIOD} |"
+              echo ""
+              echo "### Sample rows (first 10)"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            python scripts/summarize_ncaa_snapshot.py "$OUTFILE" >> "$GITHUB_STEP_SUMMARY"
+
+            {
+              echo ""
+              echo "### Files added to \`${OUT_DIR}/\`"
+              echo ""
+              echo "| File | Size |"
+              echo "|---|---|"
+              echo "| \`${OUTFILE}\` | ${SIZE} |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          else
+            {
+              echo "### ❌ Snapshot failed — no output file produced"
+              echo ""
+              echo "The scraper may have hit a network error, HTTP 4xx, or unexpected page structure."
+              echo ""
+              echo "**Scraper log:**"
+              echo "\`\`\`"
+              cat scraper.log
+              echo "\`\`\`"
+              echo ""
+              echo "> **Tip:** Check that \`conf_id\`, \`sport_code\`, and \`academic_year\` are correct for the current season."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ── 6. Commit & push snapshot ─────────────────────────────────────────
+      - name: Commit and push snapshot
+        env:
+          DATE:    ${{ steps.params.outputs.date }}
+          OUTFILE: ${{ steps.scrape.outputs.outfile }}
+          OUT_DIR: ${{ steps.params.outputs.out_dir }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$OUT_DIR"/
+
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit — ${OUT_DIR}/ is unchanged."
+            exit 0
+          fi
+
+          ADDED_FILES=$(git diff --cached --name-only | tr '\n' ' ')
+          ROWS=$(python -c "import pandas as pd; df=pd.read_csv('$OUTFILE'); print(len(df))" 2>/dev/null || echo "unknown")
+
+          COMMIT_MSG=$(printf "data: weekly NCAA conference snapshot %s\n\nFiles added  : %s\nRows         : %s\nSource       : ncaa_conference_snapshot.py (workflow run #${{ github.run_number }})" \
+            "$DATE" "$ADDED_FILES" "$ROWS")
+          git commit -m "$COMMIT_MSG"
+
+          git push origin HEAD

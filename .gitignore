@@ -21,10 +21,12 @@ env/
 !scleaned_data.csv
 !sec_cleaned_data.csv
 !secleaned_data.csv
-# Allow scraped data in data/raw/
+# Allow scraped data in data/raw/ subdirectories
 !data/
 !data/raw/
 !data/raw/*.csv
+!data/raw/ncaa_conf_snapshots/
+!data/raw/ncaa_conf_snapshots/*.csv
 
 # Editor / OS
 .DS_Store
