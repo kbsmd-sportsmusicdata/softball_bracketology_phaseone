@@ -172,7 +172,7 @@ def main():
     ap.add_argument("--academic_year", required=True, help="e.g., 2026.0 for 2025-26")
     ap.add_argument("--conf_id", required=True, help="e.g., 827 for Big Ten")
     ap.add_argument("--ranking_period", default=None, help="Optional: force a specific ranking_period value (e.g., 14.0)")
-    ap.add_argument("--out_dir", default="data/ncaa_snapshots")
+    ap.add_argument("--out_dir", default="data/raw/ncaa_conf_snapshots")
     ap.add_argument("--sleep_sec", type=float, default=DEFAULT_SLEEP_SEC)
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
