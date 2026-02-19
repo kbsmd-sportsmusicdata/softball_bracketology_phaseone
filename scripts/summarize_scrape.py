@@ -5,6 +5,7 @@ of the scraped output CSV to stdout (which the workflow appends to $GITHUB_STEP_
 Usage:
     python scripts/summarize_scrape.py <path_to_csv>
 """
+import argparse
 import sys
 import pandas as pd
 
