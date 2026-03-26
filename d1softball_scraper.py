@@ -16,6 +16,8 @@ Notes:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+from pathlib import Path
 import re
 import sys
 from dataclasses import dataclass
@@ -99,6 +101,12 @@ def fetch_html(session: requests.Session, url: str, timeout: int = 30) -> str:
     if r.status_code >= 400:
         raise RuntimeError(f"HTTP {r.status_code} for {url}")
     return r.text
+
+def save_raw_html(raw_dir: Path, filename: str, html: str) -> Path:
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    out = raw_dir / filename
+    out.write_text(html, encoding="utf-8")
+    return out
 
 def first_table_by_caption_or_heading(
     soup: BeautifulSoup, keywords: List[str]
@@ -422,6 +430,8 @@ def build_team_metrics_frame(
     team_slugs: List[Tuple[str, str]],
     woba_weights: Dict[str, float],
     woba_scale: float,
+    raw_dir: Optional[Path] = None,
+    run_stamp: Optional[str] = None,
 ) -> pd.DataFrame:
     batting_rows = []
     pitching_rows = []
@@ -430,6 +440,8 @@ def build_team_metrics_frame(
     for team_name, slug in team_slugs:
         url = TEAM_STATS_URL_TMPL.format(slug=slug)
         html = fetch_html(session, url)
+        if raw_dir and run_stamp:
+            save_raw_html(raw_dir, f"team_stats_{slug}_{run_stamp}.html", html)
         bt, pt = parse_team_stats_page(slug, html, team_name_fallback=team_name)
 
         batting_rows.append(bt.__dict__)
@@ -507,11 +519,18 @@ def main():
     ap.add_argument("--team", type=str, default=None, help="Run a single team by name (e.g., Alabama).")
     ap.add_argument("--top_n", type=int, default=50, help="How many teams to pull from leaderboards.")
     ap.add_argument("--cookie", type=str, default=None, help="Optional Cookie header value for authenticated access.")
-    ap.add_argument("--out", type=str, default="team_advanced_metrics.csv", help="Output CSV path.")
+    ap.add_argument("--raw_dir", type=str, default="data/raw", help="Directory for raw source HTML.")
+    ap.add_argument("--clean_dir", type=str, default="data/cleaned", help="Directory for processed output files.")
+    ap.add_argument("--out", type=str, default=None, help="Output CSV path. Overrides --clean_dir if provided.")
     ap.add_argument("--woba_scale", type=float, default=DEFAULT_WOBA_SCALE, help="wOBA scale (tunable).")
     args = ap.parse_args()
 
     session = get_session(cookie=args.cookie)
+    run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    raw_dir = Path(args.raw_dir)
+    clean_dir = Path(args.clean_dir)
+    clean_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(args.out) if args.out else clean_dir / f"team_advanced_metrics_{run_stamp}.csv"
 
     if args.team:
         slug = slugify_team_name(args.team)
@@ -520,6 +539,7 @@ def main():
         # Example: "Florida State" might be "florida-state" etc.
     else:
         lb_html = fetch_html(session, LEADERBOARDS_URL)
+        save_raw_html(raw_dir, f"team_leaderboards_{run_stamp}.html", lb_html)
         team_slugs = parse_top_teams_from_leaderboards(lb_html, top_n=args.top_n)
 
     df = build_team_metrics_frame(
@@ -527,10 +547,13 @@ def main():
         team_slugs=team_slugs,
         woba_weights=DEFAULT_WOBA_WEIGHTS,
         woba_scale=args.woba_scale,
+        raw_dir=raw_dir,
+        run_stamp=run_stamp,
     )
 
-    df.to_csv(args.out, index=False)
-    print(f"Saved: {args.out}")
+    df.to_csv(out_path, index=False)
+    print(f"Saved cleaned file: {out_path}")
+    print(f"Saved raw files to: {raw_dir.resolve()}")
     print(df.head(10).to_string(index=False))
 
 
