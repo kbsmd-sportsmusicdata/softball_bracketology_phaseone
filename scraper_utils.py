@@ -31,10 +31,12 @@ def get_session(cookie: Optional[str] = None) -> requests.Session:
 
 def fetch_html(session: requests.Session, url: str, timeout: int = 30) -> str:
     """Fetch a URL and return the response body, raising on HTTP errors."""
-    response = session.get(url, timeout=timeout)
-    if response.status_code >= 400:
-        raise RuntimeError(f"HTTP {response.status_code} for {url}")
-    return response.text
+    try:
+        response = session.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
 
 
 def save_raw_html(raw_dir: Path, filename: str, html: str) -> Path:
