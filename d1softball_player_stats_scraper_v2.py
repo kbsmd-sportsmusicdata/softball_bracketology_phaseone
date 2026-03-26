@@ -230,9 +230,9 @@ def scrape_player_metrics(
     team_slugs: List[Tuple[str, str]],
     season: int,
     raw_dir: Path,
+    run_stamp: str,
 ) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
-    run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     for team_name, slug in team_slugs:
         url = TEAM_STATS_YEAR_URL_TMPL.format(slug=slug, season=season)
