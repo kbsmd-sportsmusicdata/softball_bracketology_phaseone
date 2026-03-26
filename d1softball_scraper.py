@@ -34,6 +34,8 @@ from scraper_utils import (
     parse_top_teams_from_leaderboards,
     save_raw_html,
 )
+# NOTE: `get_session` remains centralized in scraper_utils to avoid duplicate
+# implementations across scraper entrypoints during merges.
 
 # ----------------------------
 # Config
