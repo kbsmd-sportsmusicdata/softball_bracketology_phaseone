@@ -47,7 +47,7 @@ def save_raw_html(raw_dir: Path, filename: str, html: str) -> Path:
     return output_path
 
 
-def html_table_to_df(tbl) -> pd.DataFrame:
+def html_table_to_df(tbl: "bs4.element.Tag") -> pd.DataFrame:
     """Convert a BeautifulSoup table tag to a DataFrame."""
     headers: List[str] = []
     thead = tbl.find("thead")
