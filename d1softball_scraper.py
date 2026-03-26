@@ -460,6 +460,7 @@ def main():
 
     session = get_session(cookie=args.cookie)
     run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
+    run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     raw_dir = Path(args.raw_dir)
     clean_dir = Path(args.clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
