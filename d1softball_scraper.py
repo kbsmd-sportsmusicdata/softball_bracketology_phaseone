@@ -26,6 +26,16 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from scraper_utils import (
+    fetch_html,
+    first_table_by_caption_or_heading,
+    get_session,
+    html_table_to_df,
+    parse_top_teams_from_leaderboards,
+    save_raw_html,
+)
+# NOTE: `get_session` remains centralized in scraper_utils to avoid duplicate
+# implementations across scraper entrypoints during merges.
 
 # ----------------------------
 # Config
@@ -34,14 +44,7 @@ from bs4 import BeautifulSoup
 BASE = "https://d1softball.com"
 LEADERBOARDS_URL = f"{BASE}/team-leaderboards/"
 TEAM_STATS_URL_TMPL = f"{BASE}/team/{{slug}}/stats/?split=overall"
-
-DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-}
+STATISTICS_URL = f"{BASE}/statistics/"
 
 # wOBA weights are *league/season specific*.
 # Softball weights are not universal; treat these as tunable defaults.
@@ -87,78 +90,6 @@ def _to_float(x: str) -> float:
         return float(x)
     except ValueError:
         return 0.0
-
-def get_session(cookie: Optional[str] = None) -> requests.Session:
-    s = requests.Session()
-    s.headers.update(DEFAULT_HEADERS)
-    if cookie:
-        # You can paste a "Cookie:" header value from your browser devtools if needed.
-        s.headers.update({"Cookie": cookie})
-    return s
-
-def fetch_html(session: requests.Session, url: str, timeout: int = 30) -> str:
-    r = session.get(url, timeout=timeout)
-    if r.status_code >= 400:
-        raise RuntimeError(f"HTTP {r.status_code} for {url}")
-    return r.text
-
-def save_raw_html(raw_dir: Path, filename: str, html: str) -> Path:
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    out = raw_dir / filename
-    out.write_text(html, encoding="utf-8")
-    return out
-
-def first_table_by_caption_or_heading(
-    soup: BeautifulSoup, keywords: List[str]
-) -> Optional[pd.DataFrame]:
-    """
-    D1Softball pages can vary. We look for the first HTML table near a heading that
-    matches any keyword.
-    """
-    # Find headings that match keywords
-    headings = soup.find_all(["h1", "h2", "h3", "h4"])
-    for h in headings:
-        text = (h.get_text(" ", strip=True) or "").lower()
-        if any(k.lower() in text for k in keywords):
-            # Look for the next table after this heading
-            tbl = h.find_next("table")
-            if tbl is not None:
-                return html_table_to_df(tbl)
-
-    # Fallback: just return the first table on page
-    tbl = soup.find("table")
-    if tbl is not None:
-        return html_table_to_df(tbl)
-
-    return None
-
-def html_table_to_df(tbl) -> pd.DataFrame:
-    # Extract headers
-    headers = []
-    thead = tbl.find("thead")
-    if thead:
-        ths = thead.find_all("th")
-        headers = [th.get_text(" ", strip=True) for th in ths]
-    else:
-        # try first row
-        first_row = tbl.find("tr")
-        if first_row:
-            headers = [c.get_text(" ", strip=True) for c in first_row.find_all(["th", "td"])]
-
-    # Extract body rows
-    rows = []
-    tbody = tbl.find("tbody")
-    tr_list = tbody.find_all("tr") if tbody else tbl.find_all("tr")[1:]
-    for tr in tr_list:
-        cells = tr.find_all(["td", "th"])
-        row = [c.get_text(" ", strip=True) for c in cells]
-        if row:
-            rows.append(row)
-
-    df = pd.DataFrame(rows)
-    if headers and len(headers) == df.shape[1]:
-        df.columns = headers
-    return df
 
 def find_totals_row(df: pd.DataFrame) -> pd.Series:
     """
@@ -389,37 +320,39 @@ def parse_team_stats_page(team_slug: str, html: str, team_name_fallback: Optiona
 
     return bt, pt
 
-def parse_top_teams_from_leaderboards(html: str, top_n: int = 50) -> List[Tuple[str, str]]:
+
+def scrape_statistics_tables_to_raw_csv(
+    session: requests.Session,
+    raw_dir: Path,
+    run_stamp: str,
+) -> Path:
     """
-    Returns list of (team_name, team_slug). Best-effort: parse any links that look like /team/<slug>/...
+    Scrape all tables from https://d1softball.com/statistics/ and save them
+    in a single raw CSV file.
     """
-    soup = BeautifulSoup(html, "html.parser")
+    statistics_html = fetch_html(session, STATISTICS_URL)
+    save_raw_html(raw_dir, f"statistics_{run_stamp}.html", statistics_html)
 
-    # Find all team links
-    links = soup.find_all("a", href=True)
-    teams = []
-    seen = set()
+    soup = BeautifulSoup(statistics_html, "html.parser")
+    tables = soup.find_all("table")
+    if not tables:
+        raise RuntimeError("Could not find any tables on the D1Softball statistics page.")
 
-    for a in links:
-        href = a["href"]
-        m = re.search(r"/team/([^/]+)/", href)
-        if not m:
+    frames = []
+    for idx, table in enumerate(tables, start=1):
+        table_df = html_table_to_df(table)
+        if table_df.empty:
             continue
-        slug = m.group(1).strip()
-        name = a.get_text(" ", strip=True) or slug.replace("-", " ").title()
+        table_df.insert(0, "table_index", idx)
+        frames.append(table_df)
 
-        key = (name.lower(), slug.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        teams.append((name, slug))
+    if not frames:
+        raise RuntimeError("Parsed tables from the statistics page were empty.")
 
-    # If the leaderboard page doesn't include /team/<slug>/ links, you can swap to a different parsing strategy.
-    if not teams:
-        raise RuntimeError("Could not extract teams from leaderboards page; page structure may have changed.")
-
-    return teams[:top_n]
-
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    stats_csv_path = raw_dir / f"statistics_tables_{run_stamp}.csv"
+    pd.concat(frames, ignore_index=True).to_csv(stats_csv_path, index=False)
+    return stats_csv_path
 
 # ----------------------------
 # Main pipeline
@@ -526,11 +459,17 @@ def main():
     args = ap.parse_args()
 
     session = get_session(cookie=args.cookie)
+    run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%S")
     run_stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     raw_dir = Path(args.raw_dir)
     clean_dir = Path(args.clean_dir)
     clean_dir.mkdir(parents=True, exist_ok=True)
     out_path = Path(args.out) if args.out else clean_dir / f"team_advanced_metrics_{run_stamp}.csv"
+    statistics_csv_path = scrape_statistics_tables_to_raw_csv(
+        session=session,
+        raw_dir=raw_dir,
+        run_stamp=run_stamp,
+    )
 
     if args.team:
         slug = slugify_team_name(args.team)
@@ -553,6 +492,7 @@ def main():
 
     df.to_csv(out_path, index=False)
     print(f"Saved cleaned file: {out_path}")
+    print(f"Saved statistics tables CSV: {statistics_csv_path}")
     print(f"Saved raw files to: {raw_dir.resolve()}")
     print(df.head(10).to_string(index=False))
 
